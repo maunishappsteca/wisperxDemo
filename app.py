@@ -114,7 +114,7 @@ def load_alignment_model(language_code: str):
             raise RuntimeError(f"No alignment model available for language: {language_code}")
         
 
-def transcribe_audio(audio_path: str, model_size: str, language: Optional[str], align: bool, translate_to: Optional[str]):
+def transcribe_audio(audio_path: str, model_size: str, language: Optional[str], align: bool):
     """Core transcription logic with optional translation"""
     try:
         model = load_model(model_size, language)
@@ -184,8 +184,7 @@ def handler(job):
                 audio_path,
                 input_data.get("model_size", "large-v3"),
                 input_data.get("language", None),
-                input_data.get("align", False),
-                input_data.get("translateTo", "-")  # Default to no translation
+                input_data.get("align", False)
             )
         except Exception as e:
             return {"error": str(e)}
@@ -219,7 +218,6 @@ if __name__ == "__main__":
                 "file_name": "test.wav",
                 "model_size": "base",
                 "language": "hi",
-                "translateTo": "en",
                 "align": True
             }
         })
