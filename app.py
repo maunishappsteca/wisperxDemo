@@ -16,6 +16,7 @@ COMPUTE_TYPE = "float16"  # Changed to float16 for better cuda compatibility
 BATCH_SIZE = 16  # Reduced batch size for cuda
 S3_BUCKET = os.environ.get("S3_BUCKET_NAME")
 MODEL_CACHE_DIR = os.getenv("WHISPER_MODEL_CACHE", "/app/models")
+S3_OUTPUT_DIR = "output"  # Base directory for outputs
 
 # Configure logging
 def setup_logging():
@@ -147,25 +148,69 @@ def transcribe_audio(audio_path: str, model_size: str, language: Optional[str], 
     except Exception as e:
         logger.error(f"Transcription failed: {str(e)}")
         raise RuntimeError(f"Transcription failed: {str(e)}")
+    
+
+
+def save_response_to_s3(job_id, response_data, status="success"):
+    """
+    Save response to S3 bucket in the appropriate directory structure
+    
+    Args:
+        job_id: The ID of the job
+        response_data: The response data to save
+        status: Status of the job (success, error, failed)
+    """
+    if not S3_BUCKET:
+        logger.warning("S3_BUCKET not configured, skipping response save")
+        return False
+    
+    try:
+        # Create the directory path
+        directory_path = f"{S3_OUTPUT_DIR}/{job_id}/"
+        file_key = f"{directory_path}response.json"
+        
+        # Convert response to JSON string
+        response_json = json.dumps(response_data, indent=2, ensure_ascii=False)
+        
+        # Upload to S3
+        s3.put_object(
+            Bucket=S3_BUCKET,
+            Key=file_key,
+            Body=response_json,
+            ContentType='application/json'
+        )
+        
+        logger.info(f"Response saved to S3: s3://{S3_BUCKET}/{file_key}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to save response to S3: {str(e)}")
+        return False
+    
 
 def handler(job):
     """RunPod serverless handler"""
     try:
         # Validate input
-        if not job.get("input"):
-            return {"error": "No input provided"}
 
         if not job.get("id"):
             return {"error": "job id not found"}
-            
-        input_data = job["input"]
+        
+        job_id = job["id"]
+
+        if not job.get("input"):
+            save_response_to_s3(job_id, response, "failed")
+            return {"error": "No input provided"}
+
         file_name = input_data.get("file_name")
 
         jobid = job["id"]
         logger.error(f"new job id is : {str(jobid)}")
         
         if not file_name:
-            return {"error": "No file_name provided in input"}
+            response = {"error": "No file_name provided in input", "job_id": job_id, "status": "failed"}
+            save_response_to_s3(job_id, response, "failed")
+            return response
         
         # 1. Download from S3
         local_path = f"/tmp/{uuid.uuid4()}_{os.path.basename(file_name)}"
@@ -182,8 +227,10 @@ def handler(job):
             else:
                 audio_path = local_path
         except Exception as e:
-            return {"error": f"Audio processing failed: {str(e)}"}
-        
+            response = {"error": f"Audio processing failed: {str(e)}", "job_id": job_id, "status": "failed"}
+            save_response_to_s3(job_id, response, "failed")
+            return response
+            
         # 3. Transcribe
         try:
             result = transcribe_audio(
@@ -192,15 +239,25 @@ def handler(job):
                 input_data.get("language", None),
                 input_data.get("align", False)
             )
+            result["job_id"] = job_id  # Include job ID in the result
+            result["status"] = "success"
+            logger.info(f"Transcription completed for job ID: {job_id}")
+            
+            # Save successful response
+            save_response_to_s3(job_id, result, "success")
+            response = result
+
         except Exception as e:
-            return {"error": str(e)}
+            response = {"error": str(e), "job_id": job_id, "status": "failed"}
+            save_response_to_s3(job_id, response, "failed")
+            
         finally:
             # 4. Cleanup
             if os.path.exists(audio_path):
                 os.remove(audio_path)
             gc.collect()
         
-        return result
+        return response
         
     except Exception as e:
         return {"error": f"Unexpected error: {str(e)}"}
@@ -220,6 +277,7 @@ if __name__ == "__main__":
     else:
         # Test with mock input
         test_result = handler({
+            "id": "test-job-id-123",
             "input": {
                 "file_name": "test.wav",
                 "model_size": "base",
