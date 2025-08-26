@@ -197,6 +197,8 @@ def handler(job):
             return {"error": "job id not found"}
         
         job_id = job["id"]
+        # Initialize response variable
+        response = {}
 
         if not job.get("input"):
             save_response_to_s3(job_id, response, "failed")
