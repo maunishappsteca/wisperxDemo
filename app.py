@@ -154,9 +154,15 @@ def handler(job):
         # Validate input
         if not job.get("input"):
             return {"error": "No input provided"}
+
+        if not job.get("id"):
+            return {"error": "job id not found"}
             
         input_data = job["input"]
         file_name = input_data.get("file_name")
+
+        jobid = job["id"]
+        logger.error(f"new job id is : {str(jobid)}")
         
         if not file_name:
             return {"error": "No file_name provided in input"}
