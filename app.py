@@ -201,8 +201,9 @@ def handler(job):
         response = {}
 
         if not job.get("input"):
+            response = {"error": "No input provided", "job_id": job_id, "status": "failed"}
             save_response_to_s3(job_id, response, "failed")
-            return {"error": "No input provided"}
+            return response
 
         file_name = input_data.get("file_name")
 
